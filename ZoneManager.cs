@@ -429,7 +429,7 @@ namespace LightweightZoneManager
         }
 
         // -------------------------------
-        // Mouse Hook Handlers
+        // IMPROVED Mouse Hook Handlers
         // -------------------------------
         private void MouseHook_MouseDown(object sender, MouseEventArgs e)
         {
@@ -444,15 +444,25 @@ namespace LightweightZoneManager
 
                 if (ctrlWasPressed)
                 {
+                    // Get the window under the cursor at the start of the drag
                     POINT cursorPos;
                     GetCursorPos(out cursorPos);
 
-                    IntPtr raw = WindowFromPoint(cursorPos);
-                    draggedWindow = GetTopLevelWindow(raw);
+                    IntPtr windowUnderCursor = WindowFromPoint(cursorPos);
+                    draggedWindow = GetTopLevelWindow(windowUnderCursor);
 
+                    // If no window under cursor, try the foreground window
                     if (draggedWindow == IntPtr.Zero)
                     {
                         draggedWindow = GetTopLevelWindow(GetForegroundWindow());
+                    }
+
+                    Console.WriteLine($"Mouse down - CTRL pressed, captured window: {draggedWindow}");
+                    if (draggedWindow != IntPtr.Zero)
+                    {
+                        string className = GetWindowClassName(draggedWindow);
+                        string title = GetWindowTextSafe(draggedWindow);
+                        Console.WriteLine($"Captured window: {title} ({className})");
                     }
                 }
             }
@@ -460,25 +470,15 @@ namespace LightweightZoneManager
 
         private void MouseHook_MouseMove(object sender, MouseEventArgs e)
         {
-            if (ctrlWasPressed && IsCtrlPressed() && !isDragSnapping)
+            // Only start showing zones if we have a valid window and CTRL is still pressed
+            if (ctrlWasPressed && IsCtrlPressed() && !isDragSnapping && draggedWindow != IntPtr.Zero)
             {
-                // Foreground during a drag is generally the dragged window
-                IntPtr currentWindow = GetTopLevelWindow(GetForegroundWindow());
-                if (currentWindow != IntPtr.Zero &&
-                    !overlayHandles.Contains(currentWindow) &&
-                    IsWindow(currentWindow) &&
-                    IsWindowVisible(currentWindow) &&
-                    !IsIconic(currentWindow))
-                {
-                    draggedWindow = currentWindow;
-                }
-
-                if (draggedWindow != IntPtr.Zero &&
-                    IsWindowVisible(draggedWindow) &&
-                    !IsIconic(draggedWindow) &&
-                    !overlayHandles.Contains(draggedWindow))
+                // Verify the window is still valid and draggable
+                if (IsWindow(draggedWindow) && IsWindowVisible(draggedWindow) && !IsIconic(draggedWindow) && !overlayHandles.Contains(draggedWindow))
                 {
                     string className = GetWindowClassName(draggedWindow);
+
+                    // Filter out system windows
                     if (!className.Contains("Shell_TrayWnd") &&
                         !className.Contains("Shell_SecondaryTrayWnd") &&
                         !className.Contains("DV2ControlHost") &&
@@ -486,15 +486,14 @@ namespace LightweightZoneManager
                     {
                         isDragSnapping = true;
                         ShowDragZones();
-                        Console.WriteLine("=== DRAG DETECTED ===");
-                        Console.WriteLine($"Zones shown for: {className}");
-                        Console.WriteLine($"Window Handle: {draggedWindow}");
-                        Console.WriteLine($"Window Visible: {IsWindowVisible(draggedWindow)}");
-                        Console.WriteLine($"Window Iconic: {IsIconic(draggedWindow)}");
+                        Console.WriteLine("=== DRAG ZONES SHOWN ===");
+                        Console.WriteLine($"Window: {GetWindowTextSafe(draggedWindow)}");
+                        Console.WriteLine($"Class: {className}");
                     }
                 }
             }
 
+            // Highlight zones during drag
             if (isDragSnapping)
             {
                 HighlightZoneUnderMouse();
@@ -507,39 +506,63 @@ namespace LightweightZoneManager
             {
                 lastDragEnd = DateTime.Now;
 
-                if (isDragSnapping)
+                if (isDragSnapping && draggedWindow != IntPtr.Zero)
                 {
-                    Console.WriteLine("=== MOUSE UP DETECTED ===");
-                    Console.WriteLine("Drag was active, checking for zone under mouse...");
+                    Console.WriteLine("=== MOUSE UP - CHECKING FOR SNAP ===");
 
                     int zoneIndex = GetZoneUnderMouse();
-                    Console.WriteLine($"Zone under mouse: {zoneIndex}");
-                    Console.WriteLine($"Dragged window handle: {draggedWindow}");
+                    Console.WriteLine($"Zone under mouse: {(zoneIndex >= 0 ? (zoneIndex + 1).ToString() : "None")}");
 
-                    if (zoneIndex >= 0 && draggedWindow != IntPtr.Zero)
+                    if (zoneIndex >= 0)
                     {
-                        Console.WriteLine($"Valid drop detected, scheduling snap to zone {zoneIndex + 1}");
+                        Console.WriteLine($"Valid drop detected, will snap to zone {zoneIndex + 1}");
 
-                        var snapTimer = new Timer();
-                        snapTimer.Interval = 280; // slightly longer to avoid fighting the OS drag loop
-                        snapTimer.Tick += (s, ev) =>
+                        // Capture the window info before the delay
+                        IntPtr targetWindow = draggedWindow;
+                        string windowTitle = GetWindowTextSafe(targetWindow);
+                        string windowClass = GetWindowClassName(targetWindow);
+
+                        Console.WriteLine($"Target window: {windowTitle} ({windowClass})");
+
+                        // Use multiple timers with different delays to ensure the snap works
+                        var timer1 = new Timer();
+                        timer1.Interval = 100; // First attempt quickly
+                        timer1.Tick += (s, ev) =>
                         {
-                            snapTimer.Stop();
-                            snapTimer.Dispose();
-                            PerformDelayedSnap(draggedWindow, zoneIndex);
-                        };
-                        snapTimer.Start();
+                            timer1.Stop();
+                            timer1.Dispose();
 
-                        Console.WriteLine($"Delayed snap queued for zone {zoneIndex + 1}");
+                            if (IsWindow(targetWindow) && IsWindowVisible(targetWindow))
+                            {
+                                Console.WriteLine("First snap attempt (100ms delay)");
+                                bool success = PerformSnapOperation(targetWindow, zoneIndex);
+
+                                if (!success)
+                                {
+                                    // Second attempt with longer delay
+                                    var timer2 = new Timer();
+                                    timer2.Interval = 300;
+                                    timer2.Tick += (s2, ev2) =>
+                                    {
+                                        timer2.Stop();
+                                        timer2.Dispose();
+                                        Console.WriteLine("Second snap attempt (400ms total delay)");
+                                        PerformSnapOperation(targetWindow, zoneIndex);
+                                    };
+                                    timer2.Start();
+                                }
+                            }
+                        };
+                        timer1.Start();
                     }
                     else
                     {
-                        Console.WriteLine("Invalid drop - no zone or no window");
+                        Console.WriteLine("No zone under mouse - no snap performed");
                     }
-
-                    EndDragSnapping();
                 }
 
+                // Clean up drag state
+                EndDragSnapping();
                 ctrlWasPressed = false;
                 draggedWindow = IntPtr.Zero;
             }
@@ -582,118 +605,130 @@ namespace LightweightZoneManager
             return -1;
         }
 
-        private void PerformDelayedSnap(IntPtr window, int zoneIndex)
+        // IMPROVED snap operation method
+        private bool PerformSnapOperation(IntPtr window, int zoneIndex)
         {
-            window = GetTopLevelWindow(window);
-
+            // Validate inputs
             if (window == IntPtr.Zero || !IsWindow(window) || overlayHandles.Contains(window))
             {
-                Console.WriteLine("Invalid target (null/dead/overlay). Aborting snap.");
-                return;
+                Console.WriteLine("Invalid window for snap operation");
+                return false;
             }
 
-            if (zoneIndex < 0 || zoneIndex >= zones.Count) return;
+            if (zoneIndex < 0 || zoneIndex >= zones.Count)
+            {
+                Console.WriteLine($"Invalid zone index: {zoneIndex}");
+                return false;
+            }
 
             Rectangle zone = zones[zoneIndex];
             string className = GetWindowClassName(window);
             string title = GetWindowTextSafe(window);
 
-            Console.WriteLine("=== ATTEMPTING SNAP ===");
-            Console.WriteLine($"Window Title: {title}");
-            Console.WriteLine($"Window Class: {className}");
+            Console.WriteLine("=== PERFORMING SNAP OPERATION ===");
+            Console.WriteLine($"Window: {title}");
+            Console.WriteLine($"Class: {className}");
             Console.WriteLine($"Handle: {window}");
-            Console.WriteLine($"Target Zone {zoneIndex + 1}: {zone}");
-            Console.WriteLine($"Window Visible: {IsWindowVisible(window)}");
-            Console.WriteLine($"Window Iconic: {IsIconic(window)}");
+            Console.WriteLine($"Target Zone {zoneIndex + 1}: X={zone.X}, Y={zone.Y}, W={zone.Width}, H={zone.Height}");
 
-            // current pos
+            // Get current window position for comparison
             RECT currentRect;
-            GetWindowRect(window, out currentRect);
-            Rectangle currentPos = new Rectangle(currentRect.Left, currentRect.Top,
-                                                currentRect.Right - currentRect.Left,
-                                                currentRect.Bottom - currentRect.Top);
-            Console.WriteLine($"Current Position: {currentPos}");
-
-            if (IsWindowVisible(window))
+            if (!GetWindowRect(window, out currentRect))
             {
-                if (IsIconic(window))
-                {
-                    Console.WriteLine("Restoring minimized window...");
-                    ShowWindow(window, NativeConstants.SW_RESTORE);
-                    System.Threading.Thread.Sleep(200);
-                }
+                Console.WriteLine("Failed to get current window rect");
+                return false;
+            }
 
-                Console.WriteLine("Trying MoveWindow...");
-                bool success1 = MoveWindow(window, zone.X, zone.Y, zone.Width, zone.Height, true);
-                Console.WriteLine($"MoveWindow result: {success1}");
+            Rectangle currentPos = new Rectangle(currentRect.Left, currentRect.Top,
+                                               currentRect.Right - currentRect.Left,
+                                               currentRect.Bottom - currentRect.Top);
+            Console.WriteLine($"Current Position: X={currentPos.X}, Y={currentPos.Y}, W={currentPos.Width}, H={currentPos.Height}");
 
-                if (!success1)
-                {
-                    Console.WriteLine("MoveWindow failed, trying SetWindowPos method 1...");
-                    bool success2 = SetWindowPos(window, IntPtr.Zero,
-                        zone.X, zone.Y, zone.Width, zone.Height,
-                        NativeConstants.SWP_NOZORDER | NativeConstants.SWP_SHOWWINDOW);
-                    Console.WriteLine($"SetWindowPos method 1 result: {success2}");
+            // Ensure window is visible and restored
+            if (!IsWindowVisible(window))
+            {
+                Console.WriteLine("Window is not visible");
+                return false;
+            }
 
-                    if (!success2)
-                    {
-                        Console.WriteLine("Method 1 failed, trying SetWindowPos method 2...");
-                        bool success3 = SetWindowPos(window, HWND_TOP,
-                            zone.X, zone.Y, zone.Width, zone.Height,
-                            NativeConstants.SWP_SHOWWINDOW);
-                        Console.WriteLine($"SetWindowPos method 2 result: {success3}");
-
-                        if (!success3)
-                        {
-                            Console.WriteLine("Method 2 failed, trying two-step approach...");
-
-                            bool moveSuccess = SetWindowPos(window, IntPtr.Zero,
-                                zone.X, zone.Y, 0, 0,
-                                NativeConstants.SWP_NOZORDER | NativeConstants.SWP_NOSIZE | NativeConstants.SWP_SHOWWINDOW);
-                            Console.WriteLine($"Move step result: {moveSuccess}");
-
-                            System.Threading.Thread.Sleep(100);
-
-                            bool resizeSuccess = SetWindowPos(window, IntPtr.Zero,
-                                0, 0, zone.Width, zone.Height,
-                                NativeConstants.SWP_NOZORDER | NativeConstants.SWP_NOMOVE | NativeConstants.SWP_SHOWWINDOW);
-                            Console.WriteLine($"Resize step result: {resizeSuccess}");
-                        }
-                    }
-                }
-
-                // Force frame refresh
-                SetWindowPos(window, IntPtr.Zero, 0, 0, 0, 0,
-                    NativeConstants.SWP_NOMOVE | NativeConstants.SWP_NOSIZE | NativeConstants.SWP_NOZORDER | NativeConstants.SWP_FRAMECHANGED);
-
+            if (IsIconic(window))
+            {
+                Console.WriteLine("Restoring minimized window...");
+                ShowWindow(window, NativeConstants.SW_RESTORE);
                 System.Threading.Thread.Sleep(100);
-                GetWindowRect(window, out currentRect);
-                Rectangle finalPos = new Rectangle(currentRect.Left, currentRect.Top,
-                                                   currentRect.Right - currentRect.Left,
-                                                   currentRect.Bottom - currentRect.Top);
-                Console.WriteLine($"Final Position: {finalPos}");
+            }
 
-                bool actuallyMoved = (finalPos.X != currentPos.X || finalPos.Y != currentPos.Y ||
-                                      finalPos.Width != currentPos.Width || finalPos.Height != currentPos.Height);
-                Console.WriteLine($"Window actually moved: {actuallyMoved}");
+            // Try multiple approaches to move the window
+            bool success = false;
 
-                if (actuallyMoved)
-                {
-                    trayIcon.ShowBalloonTip(2000, "Zone Manager",
-                        $"Window snapped to Zone {zoneIndex + 1}", ToolTipIcon.Info);
-                }
-                else
-                {
-                    trayIcon.ShowBalloonTip(2000, "Zone Manager",
-                        $"Snap may have failed for {className}. See console for details.", ToolTipIcon.Warning);
-                }
+            // Method 1: SetWindowPos with specific flags
+            Console.WriteLine("Attempting SetWindowPos method 1...");
+            success = SetWindowPos(window, HWND_TOP, zone.X, zone.Y, zone.Width, zone.Height,
+                NativeConstants.SWP_SHOWWINDOW | NativeConstants.SWP_FRAMECHANGED);
+            Console.WriteLine($"SetWindowPos method 1 result: {success}");
+
+            if (!success)
+            {
+                // Method 2: MoveWindow
+                Console.WriteLine("Attempting MoveWindow...");
+                success = MoveWindow(window, zone.X, zone.Y, zone.Width, zone.Height, true);
+                Console.WriteLine($"MoveWindow result: {success}");
+            }
+
+            if (!success)
+            {
+                // Method 3: Two-step approach (move then resize)
+                Console.WriteLine("Attempting two-step approach...");
+
+                bool moveSuccess = SetWindowPos(window, IntPtr.Zero, zone.X, zone.Y, 0, 0,
+                    NativeConstants.SWP_NOZORDER | NativeConstants.SWP_NOSIZE | NativeConstants.SWP_SHOWWINDOW);
+                Console.WriteLine($"Move step: {moveSuccess}");
+
+                System.Threading.Thread.Sleep(50);
+
+                bool resizeSuccess = SetWindowPos(window, IntPtr.Zero, 0, 0, zone.Width, zone.Height,
+                    NativeConstants.SWP_NOZORDER | NativeConstants.SWP_NOMOVE | NativeConstants.SWP_SHOWWINDOW);
+                Console.WriteLine($"Resize step: {resizeSuccess}");
+
+                success = moveSuccess || resizeSuccess;
+            }
+
+            // Force window to update
+            SetWindowPos(window, IntPtr.Zero, 0, 0, 0, 0,
+                NativeConstants.SWP_NOMOVE | NativeConstants.SWP_NOSIZE |
+                NativeConstants.SWP_NOZORDER | NativeConstants.SWP_FRAMECHANGED);
+
+            // Check if the operation actually worked
+            System.Threading.Thread.Sleep(100);
+            RECT finalRect;
+            GetWindowRect(window, out finalRect);
+            Rectangle finalPos = new Rectangle(finalRect.Left, finalRect.Top,
+                                             finalRect.Right - finalRect.Left,
+                                             finalRect.Bottom - finalRect.Top);
+
+            Console.WriteLine($"Final Position: X={finalPos.X}, Y={finalPos.Y}, W={finalPos.Width}, H={finalPos.Height}");
+
+            bool actuallyMoved = Math.Abs(finalPos.X - currentPos.X) > 5 ||
+                                Math.Abs(finalPos.Y - currentPos.Y) > 5 ||
+                                Math.Abs(finalPos.Width - currentPos.Width) > 5 ||
+                                Math.Abs(finalPos.Height - currentPos.Height) > 5;
+
+            Console.WriteLine($"Window actually moved: {actuallyMoved}");
+
+            if (actuallyMoved)
+            {
+                trayIcon.ShowBalloonTip(2000, "Zone Manager",
+                    $"Window snapped to Zone {zoneIndex + 1}", ToolTipIcon.Info);
+                Console.WriteLine("=== SNAP SUCCESSFUL ===");
+                return true;
             }
             else
             {
-                Console.WriteLine("Window is not visible, skipping snap");
+                trayIcon.ShowBalloonTip(3000, "Zone Manager",
+                    $"Snap failed for {className}. Window may not support repositioning.", ToolTipIcon.Warning);
+                Console.WriteLine("=== SNAP FAILED ===");
+                return false;
             }
-
-            Console.WriteLine("=== SNAP ATTEMPT COMPLETE ===\n");
         }
 
         // -------------------------------
@@ -826,7 +861,7 @@ namespace LightweightZoneManager
                 if (result == DialogResult.Yes)
                 {
                     Console.WriteLine("=== MANUAL SNAP TEST ===");
-                    PerformDelayedSnap(activeWindow, 0);
+                    PerformSnapOperation(activeWindow, 0);
                 }
             }
             else
@@ -974,7 +1009,7 @@ namespace LightweightZoneManager
         {
             base.SetVisibleCore(false);
         }
-        // Add this inside the ZoneManager class, e.g., right after ShowEditableZones()
+
         public void UpdateZoneFromEdit(int zoneIndex, Rectangle newBounds)
         {
             // Guard against bad indexes
@@ -984,7 +1019,7 @@ namespace LightweightZoneManager
             // Update the in-memory rectangle used by overlays
             zones[zoneIndex] = newBounds;
 
-            // Also update the saved config (percentages relative to the monitor’s working area)
+            // Also update the saved config (percentages relative to the monitor's working area)
             Screen[] monitors = Screen.AllScreens;
             var config = zoneConfigs[zoneIndex];
 
@@ -998,7 +1033,6 @@ namespace LightweightZoneManager
                 config.Height = ((double)newBounds.Height / screen.Height) * 100.0;
             }
         }
-
     }
 
     // -------------------------------
