@@ -9,6 +9,32 @@ using System.Diagnostics;
 
 namespace LightweightZoneManager
 {
+    // -------------------------------
+    // Shared native constants (available to all classes in this file)
+    // -------------------------------
+    internal static class NativeConstants
+    {
+        public const int WS_EX_LAYERED = 0x00080000;
+        public const int WS_EX_TRANSPARENT = 0x00000020;
+        public const int WS_EX_NOACTIVATE = 0x08000000;
+
+        public const uint SWP_FRAMECHANGED = 0x0020;
+        public const uint SWP_NOMOVE = 0x0002;
+        public const uint SWP_NOSIZE = 0x0001;
+        public const uint SWP_NOZORDER = 0x0004;
+        public const uint SWP_SHOWWINDOW = 0x0040;
+
+        public const int SW_RESTORE = 9;
+        public const int SW_SHOW = 5;
+
+        public const int VK_CONTROL = 0x11;
+        public const int VK_LBUTTON = 0x01;
+
+        public const uint GA_PARENT = 1;
+        public const uint GA_ROOT = 2;
+        public const uint GA_ROOTOWNER = 3;
+    }
+
     // Zone configuration class for saving/loading
     [Serializable]
     public class ZoneConfig
@@ -33,8 +59,10 @@ namespace LightweightZoneManager
         private NotifyIcon trayIcon;
         private ContextMenuStrip trayMenu;
         private bool zonesVisible = false;
-        private List<Rectangle> zones = new List<Rectangle>();
-        private List<Form> zoneOverlays = new List<Form>();
+        private readonly List<Rectangle> zones = new List<Rectangle>();
+        private readonly List<Form> zoneOverlays = new List<Form>();
+        private readonly HashSet<IntPtr> overlayHandles = new HashSet<IntPtr>(); // track overlay HWNDs
+
         private GlobalKeyboardHook keyboardHook;
         private GlobalMouseHook mouseHook;
         private string configPath;
@@ -76,35 +104,38 @@ namespace LightweightZoneManager
         [DllImport("user32.dll")]
         static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+        [DllImport("user32.dll")]
+        static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
         [DllImport("kernel32.dll")]
         static extern bool AllocConsole();
 
         [DllImport("kernel32.dll")]
         static extern IntPtr GetConsoleWindow();
 
-        private const int SW_RESTORE = 9;
-        private const int SW_SHOW = 5;
+        [DllImport("user32.dll")]
+        static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+
+        private static readonly IntPtr HWND_TOP = new IntPtr(0);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT
         {
-            public int Left;
-            public int Top;
-            public int Right;
-            public int Bottom;
+            public int Left; public int Top; public int Right; public int Bottom;
         }
 
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT
         {
-            public int X;
-            public int Y;
+            public int X; public int Y;
         }
-
-        private const uint SWP_NOZORDER = 0x0004;
-        private const uint SWP_SHOWWINDOW = 0x0040;
-        private const int VK_CONTROL = 0x11;
-        private const int VK_LBUTTON = 0x01;
 
         public ZoneManager()
         {
@@ -114,9 +145,9 @@ namespace LightweightZoneManager
             configPath = Path.Combine(Application.StartupPath, "ZoneConfig.xml");
 
             SetupTrayIcon();
-            LoadZoneConfig(); // Load saved zones or create defaults
+            LoadZoneConfig();
             SetupGlobalHotkey();
-            SetupMouseHook(); // Add drag-and-drop functionality
+            SetupMouseHook();
         }
 
         private void InitializeComponent()
@@ -128,7 +159,6 @@ namespace LightweightZoneManager
 
         private void SetupTrayIcon()
         {
-            // Create a custom icon for the tray
             Icon customIcon = CreateCustomIcon();
 
             trayIcon = new NotifyIcon()
@@ -164,40 +194,25 @@ namespace LightweightZoneManager
 
         private Icon CreateCustomIcon()
         {
-            // Create a 16x16 bitmap for the tray icon
             Bitmap bitmap = new Bitmap(16, 16);
             using (Graphics g = Graphics.FromImage(bitmap))
             {
-                // Clear background
                 g.Clear(Color.Transparent);
-
-                // Draw a grid pattern to represent zones
                 using (Pen pen = new Pen(Color.White, 1))
                 {
-                    // Draw a 3x3 grid (window zones)
-                    // Vertical lines
                     g.DrawLine(pen, 5, 2, 5, 13);
                     g.DrawLine(pen, 10, 2, 10, 13);
-                    // Horizontal lines  
                     g.DrawLine(pen, 2, 5, 13, 5);
                     g.DrawLine(pen, 2, 10, 13, 10);
-
-                    // Draw border
                     g.DrawRectangle(pen, 2, 2, 11, 11);
                 }
-
-                // Add a small accent color
                 using (Brush brush = new SolidBrush(Color.LightBlue))
                 {
-                    g.FillRectangle(brush, 3, 3, 2, 2); // Top-left zone highlighted
+                    g.FillRectangle(brush, 3, 3, 2, 2);
                 }
             }
-
-            // Convert bitmap to icon
             IntPtr hIcon = bitmap.GetHicon();
-            Icon icon = Icon.FromHandle(hIcon);
-
-            return icon;
+            return Icon.FromHandle(hIcon);
         }
 
         private void LoadZoneConfig()
@@ -213,7 +228,7 @@ namespace LightweightZoneManager
                     string xmlContent = File.ReadAllText(configPath);
                     Console.WriteLine($"Config file content length: {xmlContent.Length} characters");
 
-                    if (xmlContent.Length < 50) // Probably corrupted
+                    if (xmlContent.Length < 50)
                     {
                         Console.WriteLine("Config file appears to be corrupted (too short), using defaults");
                         CreateDefaultZones();
@@ -252,7 +267,6 @@ namespace LightweightZoneManager
                 Console.WriteLine($"Error loading zone config: {ex.Message}");
                 MessageBox.Show($"Error loading zone config: {ex.Message}\n\nUsing default zones. Your previous zones may be in the backup.", "Config Error");
 
-                // Try to backup the corrupted file
                 try
                 {
                     if (File.Exists(configPath))
@@ -285,7 +299,6 @@ namespace LightweightZoneManager
                     serializer.Serialize(stream, settings);
                 }
 
-                // Verify the file was written
                 if (File.Exists(configPath))
                 {
                     var fileInfo = new FileInfo(configPath);
@@ -306,25 +319,18 @@ namespace LightweightZoneManager
         private void CreateDefaultZones()
         {
             zoneConfigs.Clear();
-
-            // Get all monitors
             Screen[] monitors = Screen.AllScreens;
 
-            // MONITOR 1 ZONES (Usually your main monitor)
             if (monitors.Length >= 1)
             {
-                // 2x2 Grid on Monitor 1
                 zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 0, Y = 0, Width = 50, Height = 50, Name = "Top-Left" });
                 zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 50, Y = 0, Width = 50, Height = 50, Name = "Top-Right" });
                 zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 0, Y = 50, Width = 50, Height = 50, Name = "Bottom-Left" });
                 zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 50, Y = 50, Width = 50, Height = 50, Name = "Bottom-Right" });
-
-                // Full halves on Monitor 1
                 zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 0, Y = 0, Width = 50, Height = 100, Name = "Left Half" });
                 zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 50, Y = 0, Width = 50, Height = 100, Name = "Right Half" });
             }
 
-            // MONITOR 2 ZONES (Secondary monitor)
             if (monitors.Length >= 2)
             {
                 zoneConfigs.Add(new ZoneConfig { Monitor = 2, X = 0, Y = 0, Width = 100, Height = 50, Name = "Monitor 2 Top" });
@@ -342,11 +348,9 @@ namespace LightweightZoneManager
 
             foreach (var config in zoneConfigs)
             {
-                if (config.Monitor < 1 || config.Monitor > monitors.Length)
-                    continue;
+                if (config.Monitor < 1 || config.Monitor > monitors.Length) continue;
 
                 Rectangle screen = monitors[config.Monitor - 1].WorkingArea;
-
                 int x = screen.X + (int)(screen.Width * config.X / 100);
                 int y = screen.Y + (int)(screen.Height * config.Y / 100);
                 int width = (int)(screen.Width * config.Width / 100);
@@ -361,29 +365,24 @@ namespace LightweightZoneManager
             keyboardHook = new GlobalKeyboardHook();
             keyboardHook.KeyDown += KeyboardHook_KeyDown;
 
-            // Try to register hotkeys - gracefully handle failure
             try
             {
-                // Try Ctrl+Shift+` first
                 keyboardHook.RegisterHotKey(HotKeyModifiers.Control | HotKeyModifiers.Shift, Keys.Oemtilde);
                 for (int i = 1; i <= 9; i++)
                 {
                     keyboardHook.RegisterHotKey(HotKeyModifiers.Control | HotKeyModifiers.Shift, Keys.D0 + i);
                 }
 
-                // Show success message in tray
                 trayIcon.ShowBalloonTip(4000, "Zone Manager",
-                    "✅ Hotkeys: Ctrl+Shift+` (zones), Ctrl+Shift+1-9 (snap)\n" +
-                    "✅ Drag & Drop: Hold Ctrl, then drag any window to zones", ToolTipIcon.Info);
+                    "Hotkeys: Ctrl+Shift+` (zones), Ctrl+Shift+1–9 (snap)\n" +
+                    "Drag & Drop: Hold Ctrl, then drag any window to zones", ToolTipIcon.Info);
             }
-            catch (Exception)
+            catch
             {
-                // Don't crash - just continue without hotkeys
                 trayIcon.ShowBalloonTip(4000, "Zone Manager",
-                    "✅ Drag & Drop: Hold Ctrl, then drag any window to zones\n" +
-                    "⚠️ Hotkeys unavailable (run as admin for hotkeys)", ToolTipIcon.Info);
+                    "Drag & Drop: Hold Ctrl, then drag any window to zones\n" +
+                    "Hotkeys unavailable (run as admin for hotkeys)", ToolTipIcon.Info);
 
-                // Update tray tooltip to reflect features available
                 trayIcon.Text = "Zone Manager - Hold Ctrl, then drag windows to snap to zones";
             }
         }
@@ -397,20 +396,47 @@ namespace LightweightZoneManager
                 mouseHook.MouseDown += MouseHook_MouseDown;
                 mouseHook.MouseUp += MouseHook_MouseUp;
             }
-            catch (Exception)
+            catch
             {
-                // Mouse hook is optional - continue without it
+                // Optional. Continue without it.
             }
         }
 
+        private IntPtr GetTopLevelWindow(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero) return IntPtr.Zero;
+            IntPtr root = GetAncestor(hWnd, NativeConstants.GA_ROOT);
+            return root == IntPtr.Zero ? hWnd : root;
+        }
+
+        private string GetWindowClassName(IntPtr hWnd)
+        {
+            var className = new System.Text.StringBuilder(256);
+            GetClassName(hWnd, className, className.Capacity);
+            return className.ToString();
+        }
+
+        private string GetWindowTextSafe(IntPtr hWnd)
+        {
+            var sb = new System.Text.StringBuilder(512);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            return sb.ToString();
+        }
+
+        private bool IsCtrlPressed()
+        {
+            return (GetAsyncKeyState(NativeConstants.VK_CONTROL) & 0x8000) != 0;
+        }
+
+        // -------------------------------
+        // Mouse Hook Handlers
+        // -------------------------------
         private void MouseHook_MouseDown(object sender, MouseEventArgs e)
         {
-            // Just check if Ctrl is pressed, don't interfere with dragging
             if (e.Button == MouseButtons.Left)
             {
                 ctrlWasPressed = IsCtrlPressed();
 
-                // Prevent too-rapid consecutive drags
                 if ((DateTime.Now - lastDragEnd).TotalMilliseconds < 500)
                 {
                     return;
@@ -418,15 +444,15 @@ namespace LightweightZoneManager
 
                 if (ctrlWasPressed)
                 {
-                    // Get the window under cursor for potential snapping
                     POINT cursorPos;
                     GetCursorPos(out cursorPos);
-                    draggedWindow = WindowFromPoint(cursorPos);
 
-                    // Fallback to foreground window
+                    IntPtr raw = WindowFromPoint(cursorPos);
+                    draggedWindow = GetTopLevelWindow(raw);
+
                     if (draggedWindow == IntPtr.Zero)
                     {
-                        draggedWindow = GetForegroundWindow();
+                        draggedWindow = GetTopLevelWindow(GetForegroundWindow());
                     }
                 }
             }
@@ -434,33 +460,33 @@ namespace LightweightZoneManager
 
         private void MouseHook_MouseMove(object sender, MouseEventArgs e)
         {
-            // If Ctrl is held and we're potentially dragging, show zones
             if (ctrlWasPressed && IsCtrlPressed() && !isDragSnapping)
             {
-                // Get fresh window handle in case it changed
-                POINT cursorPos;
-                GetCursorPos(out cursorPos);
-                IntPtr currentWindow = GetForegroundWindow();
-
-                // Use the most recent valid window
-                if (currentWindow != IntPtr.Zero && IsWindowVisible(currentWindow) && !IsIconic(currentWindow))
+                // Foreground during a drag is generally the dragged window
+                IntPtr currentWindow = GetTopLevelWindow(GetForegroundWindow());
+                if (currentWindow != IntPtr.Zero &&
+                    !overlayHandles.Contains(currentWindow) &&
+                    IsWindow(currentWindow) &&
+                    IsWindowVisible(currentWindow) &&
+                    !IsIconic(currentWindow))
                 {
                     draggedWindow = currentWindow;
                 }
 
-                // Only activate if we have a valid window
-                if (draggedWindow != IntPtr.Zero && IsWindowVisible(draggedWindow) && !IsIconic(draggedWindow))
+                if (draggedWindow != IntPtr.Zero &&
+                    IsWindowVisible(draggedWindow) &&
+                    !IsIconic(draggedWindow) &&
+                    !overlayHandles.Contains(draggedWindow))
                 {
                     string className = GetWindowClassName(draggedWindow);
-                    if (!className.Contains("ZoneOverlay") &&
-                        !className.Contains("Shell_TrayWnd") &&
+                    if (!className.Contains("Shell_TrayWnd") &&
                         !className.Contains("Shell_SecondaryTrayWnd") &&
                         !className.Contains("DV2ControlHost") &&
                         className != "Progman")
                     {
                         isDragSnapping = true;
                         ShowDragZones();
-                        Console.WriteLine($"=== DRAG DETECTED ===");
+                        Console.WriteLine("=== DRAG DETECTED ===");
                         Console.WriteLine($"Zones shown for: {className}");
                         Console.WriteLine($"Window Handle: {draggedWindow}");
                         Console.WriteLine($"Window Visible: {IsWindowVisible(draggedWindow)}");
@@ -469,7 +495,6 @@ namespace LightweightZoneManager
                 }
             }
 
-            // Update zone highlighting if zones are visible
             if (isDragSnapping)
             {
                 HighlightZoneUnderMouse();
@@ -482,11 +507,10 @@ namespace LightweightZoneManager
             {
                 lastDragEnd = DateTime.Now;
 
-                // Handle snapping if zones are visible
                 if (isDragSnapping)
                 {
                     Console.WriteLine("=== MOUSE UP DETECTED ===");
-                    Console.WriteLine($"Drag was active, checking for zone under mouse...");
+                    Console.WriteLine("Drag was active, checking for zone under mouse...");
 
                     int zoneIndex = GetZoneUnderMouse();
                     Console.WriteLine($"Zone under mouse: {zoneIndex}");
@@ -496,10 +520,10 @@ namespace LightweightZoneManager
                     {
                         Console.WriteLine($"Valid drop detected, scheduling snap to zone {zoneIndex + 1}");
 
-                        // Use a delayed snap to avoid conflicting with Windows drag
                         var snapTimer = new Timer();
-                        snapTimer.Interval = 200; // Wait 200ms for Windows to finish
-                        snapTimer.Tick += (s, ev) => {
+                        snapTimer.Interval = 280; // slightly longer to avoid fighting the OS drag loop
+                        snapTimer.Tick += (s, ev) =>
+                        {
                             snapTimer.Stop();
                             snapTimer.Dispose();
                             PerformDelayedSnap(draggedWindow, zoneIndex);
@@ -510,158 +534,22 @@ namespace LightweightZoneManager
                     }
                     else
                     {
-                        Console.WriteLine("❌ Invalid drop - no zone or no window");
+                        Console.WriteLine("Invalid drop - no zone or no window");
                     }
 
                     EndDragSnapping();
                 }
 
-                // Reset state
                 ctrlWasPressed = false;
                 draggedWindow = IntPtr.Zero;
             }
         }
 
-        private void PerformDelayedSnap(IntPtr window, int zoneIndex)
+        private void EndDragSnapping()
         {
-            if (window != IntPtr.Zero && zoneIndex >= 0 && zoneIndex < zones.Count)
-            {
-                Rectangle zone = zones[zoneIndex];
-                string className = GetWindowClassName(window);
-
-                Console.WriteLine($"=== ATTEMPTING SNAP ===");
-                Console.WriteLine($"Window Handle: {window}");
-                Console.WriteLine($"Window Class: {className}");
-                Console.WriteLine($"Target Zone {zoneIndex + 1}: {zone}");
-                Console.WriteLine($"Window Visible: {IsWindowVisible(window)}");
-                Console.WriteLine($"Window Iconic: {IsIconic(window)}");
-
-                // Get current window position for comparison
-                RECT currentRect;
-                GetWindowRect(window, out currentRect);
-                Rectangle currentPos = new Rectangle(currentRect.Left, currentRect.Top,
-                    currentRect.Right - currentRect.Left, currentRect.Bottom - currentRect.Top);
-                Console.WriteLine($"Current Position: {currentPos}");
-
-                // Make sure window is valid and visible
-                if (IsWindowVisible(window))
-                {
-                    // If window is minimized, restore it first
-                    if (IsIconic(window))
-                    {
-                        Console.WriteLine("Restoring minimized window...");
-                        ShowWindow(window, SW_RESTORE);
-                        System.Threading.Thread.Sleep(200);
-                    }
-
-                    // Try the most aggressive method first - MoveWindow
-                    Console.WriteLine("Trying MoveWindow...");
-                    bool success1 = MoveWindow(window, zone.X, zone.Y, zone.Width, zone.Height, true);
-                    Console.WriteLine($"MoveWindow result: {success1}");
-
-                    if (!success1)
-                    {
-                        Console.WriteLine("MoveWindow failed, trying SetWindowPos method 1...");
-                        bool success2 = SetWindowPos(window, IntPtr.Zero,
-                            zone.X, zone.Y, zone.Width, zone.Height,
-                            SWP_NOZORDER | SWP_SHOWWINDOW);
-                        Console.WriteLine($"SetWindowPos method 1 result: {success2}");
-
-                        if (!success2)
-                        {
-                            Console.WriteLine("Method 1 failed, trying SetWindowPos method 2...");
-                            bool success3 = SetWindowPos(window, HWND_TOP,
-                                zone.X, zone.Y, zone.Width, zone.Height,
-                                SWP_SHOWWINDOW);
-                            Console.WriteLine($"SetWindowPos method 2 result: {success3}");
-
-                            if (!success3)
-                            {
-                                Console.WriteLine("Method 2 failed, trying two-step approach...");
-
-                                // Step 1: Move
-                                bool moveSuccess = SetWindowPos(window, IntPtr.Zero,
-                                    zone.X, zone.Y, 0, 0,
-                                    SWP_NOZORDER | SWP_NOSIZE | SWP_SHOWWINDOW);
-                                Console.WriteLine($"Move step result: {moveSuccess}");
-
-                                System.Threading.Thread.Sleep(100);
-
-                                // Step 2: Resize
-                                bool resizeSuccess = SetWindowPos(window, IntPtr.Zero,
-                                    0, 0, zone.Width, zone.Height,
-                                    SWP_NOZORDER | SWP_NOMOVE | SWP_SHOWWINDOW);
-                                Console.WriteLine($"Resize step result: {resizeSuccess}");
-                            }
-                        }
-                    }
-
-                    // Force window refresh
-                    SetWindowPos(window, IntPtr.Zero, 0, 0, 0, 0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-
-                    // Check final position
-                    System.Threading.Thread.Sleep(100);
-                    GetWindowRect(window, out currentRect);
-                    Rectangle finalPos = new Rectangle(currentRect.Left, currentRect.Top,
-                        currentRect.Right - currentRect.Left, currentRect.Bottom - currentRect.Top);
-                    Console.WriteLine($"Final Position: {finalPos}");
-
-                    bool actuallyMoved = (finalPos.X != currentPos.X || finalPos.Y != currentPos.Y ||
-                                        finalPos.Width != currentPos.Width || finalPos.Height != currentPos.Height);
-                    Console.WriteLine($"Window actually moved: {actuallyMoved}");
-
-                    if (actuallyMoved)
-                    {
-                        trayIcon.ShowBalloonTip(2000, "Zone Manager",
-                            $"✅ Window snapped to Zone {zoneIndex + 1}", ToolTipIcon.Info);
-                    }
-                    else
-                    {
-                        trayIcon.ShowBalloonTip(2000, "Zone Manager",
-                            $"❌ Snap failed for {className}. Check console for details.", ToolTipIcon.Warning);
-                    }
-                }
-                else
-                {
-                    Console.WriteLine("❌ Window is not visible, skipping snap");
-                }
-
-                Console.WriteLine("=== SNAP ATTEMPT COMPLETE ===\n");
-            }
-        }
-
-        [DllImport("user32.dll")]
-        static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
-
-        private static readonly IntPtr HWND_TOP = new IntPtr(0);
-        private const uint SWP_FRAMECHANGED = 0x0020;
-        private const uint SWP_NOMOVE = 0x0002;
-        private const uint SWP_NOSIZE = 0x0001;
-
-        private bool IsCtrlPressed()
-        {
-            return (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-        }
-
-        private string GetWindowClassName(IntPtr hWnd)
-        {
-            var className = new System.Text.StringBuilder(256);
-            GetClassName(hWnd, className, className.Capacity);
-            return className.ToString();
-        }
-
-        private void ShowDragZones()
-        {
-            HideZones(); // Clear existing zones
-
-            for (int i = 0; i < zones.Count && i < 9; i++)
-            {
-                var overlay = new DragZoneOverlay(zones[i], (i + 1).ToString(), i);
-                overlay.Show();
-                zoneOverlays.Add(overlay);
-            }
-            zonesVisible = true;
+            isDragSnapping = false;
+            ctrlWasPressed = false;
+            HideZones();
         }
 
         private void HighlightZoneUnderMouse()
@@ -694,23 +582,197 @@ namespace LightweightZoneManager
             return -1;
         }
 
-
-
-        private void EndDragSnapping()
+        private void PerformDelayedSnap(IntPtr window, int zoneIndex)
         {
-            isDragSnapping = false;
-            ctrlWasPressed = false;
-            HideZones();
+            window = GetTopLevelWindow(window);
+
+            if (window == IntPtr.Zero || !IsWindow(window) || overlayHandles.Contains(window))
+            {
+                Console.WriteLine("Invalid target (null/dead/overlay). Aborting snap.");
+                return;
+            }
+
+            if (zoneIndex < 0 || zoneIndex >= zones.Count) return;
+
+            Rectangle zone = zones[zoneIndex];
+            string className = GetWindowClassName(window);
+            string title = GetWindowTextSafe(window);
+
+            Console.WriteLine("=== ATTEMPTING SNAP ===");
+            Console.WriteLine($"Window Title: {title}");
+            Console.WriteLine($"Window Class: {className}");
+            Console.WriteLine($"Handle: {window}");
+            Console.WriteLine($"Target Zone {zoneIndex + 1}: {zone}");
+            Console.WriteLine($"Window Visible: {IsWindowVisible(window)}");
+            Console.WriteLine($"Window Iconic: {IsIconic(window)}");
+
+            // current pos
+            RECT currentRect;
+            GetWindowRect(window, out currentRect);
+            Rectangle currentPos = new Rectangle(currentRect.Left, currentRect.Top,
+                                                currentRect.Right - currentRect.Left,
+                                                currentRect.Bottom - currentRect.Top);
+            Console.WriteLine($"Current Position: {currentPos}");
+
+            if (IsWindowVisible(window))
+            {
+                if (IsIconic(window))
+                {
+                    Console.WriteLine("Restoring minimized window...");
+                    ShowWindow(window, NativeConstants.SW_RESTORE);
+                    System.Threading.Thread.Sleep(200);
+                }
+
+                Console.WriteLine("Trying MoveWindow...");
+                bool success1 = MoveWindow(window, zone.X, zone.Y, zone.Width, zone.Height, true);
+                Console.WriteLine($"MoveWindow result: {success1}");
+
+                if (!success1)
+                {
+                    Console.WriteLine("MoveWindow failed, trying SetWindowPos method 1...");
+                    bool success2 = SetWindowPos(window, IntPtr.Zero,
+                        zone.X, zone.Y, zone.Width, zone.Height,
+                        NativeConstants.SWP_NOZORDER | NativeConstants.SWP_SHOWWINDOW);
+                    Console.WriteLine($"SetWindowPos method 1 result: {success2}");
+
+                    if (!success2)
+                    {
+                        Console.WriteLine("Method 1 failed, trying SetWindowPos method 2...");
+                        bool success3 = SetWindowPos(window, HWND_TOP,
+                            zone.X, zone.Y, zone.Width, zone.Height,
+                            NativeConstants.SWP_SHOWWINDOW);
+                        Console.WriteLine($"SetWindowPos method 2 result: {success3}");
+
+                        if (!success3)
+                        {
+                            Console.WriteLine("Method 2 failed, trying two-step approach...");
+
+                            bool moveSuccess = SetWindowPos(window, IntPtr.Zero,
+                                zone.X, zone.Y, 0, 0,
+                                NativeConstants.SWP_NOZORDER | NativeConstants.SWP_NOSIZE | NativeConstants.SWP_SHOWWINDOW);
+                            Console.WriteLine($"Move step result: {moveSuccess}");
+
+                            System.Threading.Thread.Sleep(100);
+
+                            bool resizeSuccess = SetWindowPos(window, IntPtr.Zero,
+                                0, 0, zone.Width, zone.Height,
+                                NativeConstants.SWP_NOZORDER | NativeConstants.SWP_NOMOVE | NativeConstants.SWP_SHOWWINDOW);
+                            Console.WriteLine($"Resize step result: {resizeSuccess}");
+                        }
+                    }
+                }
+
+                // Force frame refresh
+                SetWindowPos(window, IntPtr.Zero, 0, 0, 0, 0,
+                    NativeConstants.SWP_NOMOVE | NativeConstants.SWP_NOSIZE | NativeConstants.SWP_NOZORDER | NativeConstants.SWP_FRAMECHANGED);
+
+                System.Threading.Thread.Sleep(100);
+                GetWindowRect(window, out currentRect);
+                Rectangle finalPos = new Rectangle(currentRect.Left, currentRect.Top,
+                                                   currentRect.Right - currentRect.Left,
+                                                   currentRect.Bottom - currentRect.Top);
+                Console.WriteLine($"Final Position: {finalPos}");
+
+                bool actuallyMoved = (finalPos.X != currentPos.X || finalPos.Y != currentPos.Y ||
+                                      finalPos.Width != currentPos.Width || finalPos.Height != currentPos.Height);
+                Console.WriteLine($"Window actually moved: {actuallyMoved}");
+
+                if (actuallyMoved)
+                {
+                    trayIcon.ShowBalloonTip(2000, "Zone Manager",
+                        $"Window snapped to Zone {zoneIndex + 1}", ToolTipIcon.Info);
+                }
+                else
+                {
+                    trayIcon.ShowBalloonTip(2000, "Zone Manager",
+                        $"Snap may have failed for {className}. See console for details.", ToolTipIcon.Warning);
+                }
+            }
+            else
+            {
+                Console.WriteLine("Window is not visible, skipping snap");
+            }
+
+            Console.WriteLine("=== SNAP ATTEMPT COMPLETE ===\n");
         }
 
+        // -------------------------------
+        // Zone overlay show/hide
+        // -------------------------------
+        private void ShowDragZones()
+        {
+            HideZones();
+
+            for (int i = 0; i < zones.Count && i < 9; i++)
+            {
+                var overlay = new DragZoneOverlay(zones[i], (i + 1).ToString(), i);
+                overlay.Show();
+                zoneOverlays.Add(overlay);
+                overlayHandles.Add(overlay.Handle);
+            }
+            zonesVisible = true;
+        }
+
+        private void ShowZones()
+        {
+            if (editMode)
+            {
+                ShowEditableZones();
+                return;
+            }
+
+            HideZones();
+
+            for (int i = 0; i < zones.Count && i < 9; i++)
+            {
+                var overlay = new ZoneOverlay(zones[i], (i + 1).ToString());
+                overlay.Show();
+                zoneOverlays.Add(overlay);
+                overlayHandles.Add(overlay.Handle);
+            }
+            zonesVisible = true;
+        }
+
+        private void ShowEditableZones()
+        {
+            HideZones();
+
+            for (int i = 0; i < zones.Count && i < 9; i++)
+            {
+                var overlay = new EditableZoneOverlay(zones[i], (i + 1).ToString(), i, this);
+                overlay.Show();
+                zoneOverlays.Add(overlay);
+                overlayHandles.Add(overlay.Handle);
+            }
+            zonesVisible = true;
+
+            trayIcon.ShowBalloonTip(5000, "Zone Editor",
+                "Drag zones to move, drag corners to resize. Right-click tray → 'Save Current Layout' when done.",
+                ToolTipIcon.Info);
+        }
+
+        private void HideZones()
+        {
+            foreach (var overlay in zoneOverlays)
+            {
+                overlayHandles.Remove(overlay.Handle);
+                overlay.Close();
+            }
+            zoneOverlays.Clear();
+            overlayHandles.Clear();
+            zonesVisible = false;
+            editMode = false;
+        }
+
+        // -------------------------------
+        // Hotkeys / Tray
+        // -------------------------------
         private void KeyboardHook_KeyDown(object sender, KeyPressedEventArgs e)
         {
-            // Ctrl+Shift+` to toggle zones
             if (e.Modifier == (HotKeyModifiers.Control | HotKeyModifiers.Shift) && e.Key == Keys.Oemtilde)
             {
                 ToggleZones();
             }
-            // Ctrl+Shift+1-9 to snap to zone
             else if (e.Modifier == (HotKeyModifiers.Control | HotKeyModifiers.Shift) && e.Key >= Keys.D1 && e.Key <= Keys.D9)
             {
                 int zoneIndex = e.Key - Keys.D1;
@@ -723,74 +785,33 @@ namespace LightweightZoneManager
 
         private void ToggleZones()
         {
-            if (zonesVisible)
-                HideZones();
-            else
-                ShowZones();
-        }
-
-        private void ShowZones()
-        {
-            if (editMode)
-            {
-                ShowEditableZones();
-                return;
-            }
-
-            HideZones(); // Clear existing overlays first
-
-            for (int i = 0; i < zones.Count && i < 9; i++) // Limit to 9 zones for number keys
-            {
-                var overlay = new ZoneOverlay(zones[i], (i + 1).ToString());
-                overlay.Show();
-                zoneOverlays.Add(overlay);
-            }
-            zonesVisible = true;
-        }
-
-        private void HideZones()
-        {
-            foreach (var overlay in zoneOverlays)
-            {
-                overlay.Close();
-            }
-            zoneOverlays.Clear();
-            zonesVisible = false;
-            editMode = false;
+            if (zonesVisible) HideZones();
+            else ShowZones();
         }
 
         private void SnapActiveWindowToZone(int zoneIndex)
         {
-            IntPtr activeWindow = GetForegroundWindow();
-            if (activeWindow != IntPtr.Zero && IsWindowVisible(activeWindow) && !IsIconic(activeWindow))
+            IntPtr activeWindow = GetTopLevelWindow(GetForegroundWindow());
+            if (activeWindow != IntPtr.Zero &&
+                !overlayHandles.Contains(activeWindow) &&
+                IsWindowVisible(activeWindow) && !IsIconic(activeWindow))
             {
                 Rectangle zone = zones[zoneIndex];
                 SetWindowPos(activeWindow, IntPtr.Zero,
                     zone.X, zone.Y, zone.Width, zone.Height,
-                    SWP_NOZORDER | SWP_SHOWWINDOW);
+                    NativeConstants.SWP_NOZORDER | NativeConstants.SWP_SHOWWINDOW);
             }
             HideZones();
         }
 
-        private void TrayIcon_DoubleClick(object sender, EventArgs e)
-        {
-            ToggleZones();
-        }
-
-        private void ShowZones_Click(object sender, EventArgs e)
-        {
-            ShowZones();
-        }
-
-        private void HideZones_Click(object sender, EventArgs e)
-        {
-            HideZones();
-        }
+        private void TrayIcon_DoubleClick(object sender, EventArgs e) => ToggleZones();
+        private void ShowZones_Click(object sender, EventArgs e) => ShowZones();
+        private void HideZones_Click(object sender, EventArgs e) => HideZones();
 
         private void TestSnapActive_Click(object sender, EventArgs e)
         {
-            IntPtr activeWindow = GetForegroundWindow();
-            if (activeWindow != IntPtr.Zero)
+            IntPtr activeWindow = GetTopLevelWindow(GetForegroundWindow());
+            if (activeWindow != IntPtr.Zero && !overlayHandles.Contains(activeWindow))
             {
                 string className = GetWindowClassName(activeWindow);
                 var result = MessageBox.Show(
@@ -805,7 +826,7 @@ namespace LightweightZoneManager
                 if (result == DialogResult.Yes)
                 {
                     Console.WriteLine("=== MANUAL SNAP TEST ===");
-                    PerformDelayedSnap(activeWindow, 0); // Snap to Zone 1
+                    PerformDelayedSnap(activeWindow, 0);
                 }
             }
             else
@@ -828,9 +849,9 @@ namespace LightweightZoneManager
 
         private void ReloadConfig_Click(object sender, EventArgs e)
         {
-            HideZones(); // Hide any visible zones first
+            HideZones();
             LoadZoneConfig();
-            trayIcon.ShowBalloonTip(2000, "Zone Manager", $"Config reloaded! {zones.Count} zones loaded.", ToolTipIcon.Info);
+            trayIcon.ShowBalloonTip(2000, "Zone Manager", $"Config reloaded. {zones.Count} zones loaded.", ToolTipIcon.Info);
         }
 
         private void ResetZones_Click(object sender, EventArgs e)
@@ -844,46 +865,6 @@ namespace LightweightZoneManager
                 SaveZoneConfig();
                 HideZones();
                 trayIcon.ShowBalloonTip(2000, "Zone Manager", "Zones reset to defaults!", ToolTipIcon.Info);
-            }
-        }
-
-        private void ShowEditableZones()
-        {
-            HideZones(); // Clear existing overlays first
-
-            for (int i = 0; i < zones.Count && i < 9; i++)
-            {
-                var overlay = new EditableZoneOverlay(zones[i], (i + 1).ToString(), i, this);
-                overlay.Show();
-                zoneOverlays.Add(overlay);
-            }
-            zonesVisible = true;
-
-            // Show instructions
-            trayIcon.ShowBalloonTip(5000, "Zone Editor",
-                "Drag zones to move, drag corners to resize. Right-click tray → 'Save Current Layout' when done.",
-                ToolTipIcon.Info);
-        }
-
-        public void UpdateZoneFromEdit(int zoneIndex, Rectangle newBounds)
-        {
-            if (zoneIndex >= 0 && zoneIndex < zones.Count && zoneIndex < zoneConfigs.Count)
-            {
-                zones[zoneIndex] = newBounds;
-
-                // Update config with percentages
-                Screen[] monitors = Screen.AllScreens;
-                var config = zoneConfigs[zoneIndex];
-
-                if (config.Monitor >= 1 && config.Monitor <= monitors.Length)
-                {
-                    Rectangle screen = monitors[config.Monitor - 1].WorkingArea;
-
-                    config.X = ((double)(newBounds.X - screen.X) / screen.Width) * 100;
-                    config.Y = ((double)(newBounds.Y - screen.Y) / screen.Height) * 100;
-                    config.Width = ((double)newBounds.Width / screen.Width) * 100;
-                    config.Height = ((double)newBounds.Height / screen.Height) * 100;
-                }
             }
         }
 
@@ -922,10 +903,8 @@ namespace LightweightZoneManager
             {
                 var exePath = Application.ExecutablePath;
                 var startInfo = new ProcessStartInfo(exePath);
-                startInfo.Verb = "runas"; // This requests admin privileges
+                startInfo.Verb = "runas";
                 Process.Start(startInfo);
-
-                // Close current instance
                 Exit_Click(sender, e);
             }
             catch (Exception ex)
@@ -942,11 +921,10 @@ namespace LightweightZoneManager
                 Process.Start("explorer.exe", configDir);
 
                 string info = $"Config folder opened!\n\n" +
-                            $"Main config: ZoneConfig.xml\n" +
-                            $"Backups: ZoneConfig.xml.backup.*\n\n" +
-                            $"If you lost your zones, look for backup files.\n" +
-                            $"You can rename a backup to ZoneConfig.xml to restore it.";
-
+                              $"Main config: ZoneConfig.xml\n" +
+                              $"Backups: ZoneConfig.xml.backup.*\n\n" +
+                              $"If you lost your zones, look for backup files.\n" +
+                              $"You can rename a backup to ZoneConfig.xml to restore it.";
                 MessageBox.Show(info, "Config Folder", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
@@ -961,7 +939,6 @@ namespace LightweightZoneManager
 
             if (consoleWindow == IntPtr.Zero)
             {
-                // Allocate a new console
                 AllocConsole();
                 Console.WriteLine("=== Zone Manager Debug Console ===");
                 Console.WriteLine("Debug output will appear here during drag operations.");
@@ -969,43 +946,27 @@ namespace LightweightZoneManager
             }
             else
             {
-                // Show existing console
-                ShowWindow(consoleWindow, SW_SHOW);
+                ShowWindow(consoleWindow, NativeConstants.SW_SHOW);
             }
         }
 
         private void PinInstructions_Click(object sender, EventArgs e)
         {
-            string instructions = "🎯 HOW TO USE ZONE MANAGER:\n\n" +
-                                "DRAG & DROP SNAPPING (No Admin Required!):\n" +
-                                "• Hold CTRL, then START dragging any window\n" +
-                                "• Keep CTRL held while dragging\n" +
-                                "• Zones will appear after you start moving\n" +
-                                "• Drag over a zone to highlight it\n" +
-                                "• Release mouse (while still in zone) to snap\n\n" +
-                                "HOTKEYS (Admin Mode Only):\n" +
-                                "• Ctrl+Shift+` = Show/hide zones\n" +
-                                "• Ctrl+Shift+1-9 = Snap active window to zone\n\n" +
-                                "📌 HOW TO PIN ICON TO SYSTEM TRAY:\n\n" +
-                                "Method 1 - Windows 10/11:\n" +
-                                "1. Right-click empty space on taskbar\n" +
-                                "2. Select 'Taskbar settings'\n" +
-                                "3. Scroll to 'Notification area'\n" +
-                                "4. Click 'Turn system icons on or off'\n" +
-                                "5. Find 'LightweightZoneManager' and turn it ON\n\n" +
-                                "Method 2 - Show All Icons:\n" +
-                                "1. In Taskbar settings → Notification area\n" +
-                                "2. Click 'Select which icons appear on taskbar'\n" +
-                                "3. Turn ON: 'Always show all icons in notification area'\n\n" +
-                                "Method 3 - Quick Access:\n" +
-                                "1. Look for the up arrow (^) next to system tray\n" +
-                                "2. Click it to see hidden icons\n" +
-                                "3. Drag the Zone Manager icon to the main tray area\n\n" +
-                                "🔧 TROUBLESHOOTING:\n" +
-                                "• Config file location: " + configPath + "\n" +
-                                "• Current zones loaded: " + zones.Count + "\n" +
-                                "• For debugging, check console output";
-
+            string instructions =
+                "HOW TO USE ZONE MANAGER:\n\n" +
+                "DRAG & DROP SNAPPING (No Admin Required):\n" +
+                "• Hold CTRL, then START dragging any window\n" +
+                "• Keep CTRL held while dragging\n" +
+                "• Zones will appear after you start moving\n" +
+                "• Drag over a zone to highlight it\n" +
+                "• Release mouse (while still in zone) to snap\n\n" +
+                "HOTKEYS (Admin Mode Only):\n" +
+                "• Ctrl+Shift+` = Show/hide zones\n" +
+                "• Ctrl+Shift+1–9 = Snap active window to zone\n\n" +
+                "TROUBLESHOOTING:\n" +
+                $"• Config: {configPath}\n" +
+                $"• Zones loaded: {zones.Count}\n" +
+                "• Elevated windows require running this app as Admin.";
             MessageBox.Show(instructions, "Zone Manager Usage & Pin Instructions", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
@@ -1013,23 +974,45 @@ namespace LightweightZoneManager
         {
             base.SetVisibleCore(false);
         }
+        // Add this inside the ZoneManager class, e.g., right after ShowEditableZones()
+        public void UpdateZoneFromEdit(int zoneIndex, Rectangle newBounds)
+        {
+            // Guard against bad indexes
+            if (zoneIndex < 0 || zoneIndex >= zones.Count || zoneIndex >= zoneConfigs.Count)
+                return;
+
+            // Update the in-memory rectangle used by overlays
+            zones[zoneIndex] = newBounds;
+
+            // Also update the saved config (percentages relative to the monitor’s working area)
+            Screen[] monitors = Screen.AllScreens;
+            var config = zoneConfigs[zoneIndex];
+
+            if (config.Monitor >= 1 && config.Monitor <= monitors.Length)
+            {
+                Rectangle screen = monitors[config.Monitor - 1].WorkingArea;
+
+                config.X = ((double)(newBounds.X - screen.X) / screen.Width) * 100.0;
+                config.Y = ((double)(newBounds.Y - screen.Y) / screen.Height) * 100.0;
+                config.Width = ((double)newBounds.Width / screen.Width) * 100.0;
+                config.Height = ((double)newBounds.Height / screen.Height) * 100.0;
+            }
+        }
+
     }
 
-    // Zone overlay form
+    // -------------------------------
+    // Zone overlay form (view-only)
+    // -------------------------------
     public class ZoneOverlay : Form
     {
-        private string zoneNumber;
-        private static Color[] zoneColors = new Color[]
+        protected override bool ShowWithoutActivation => true;
+        private readonly string zoneNumber;
+
+        private static readonly Color[] zoneColors = new Color[]
         {
-            Color.Blue,         // Blue
-            Color.Red,          // Red  
-            Color.Green,        // Green
-            Color.Orange,       // Orange
-            Color.Purple,       // Purple
-            Color.Yellow,       // Yellow
-            Color.Magenta,      // Magenta
-            Color.Cyan,         // Cyan
-            Color.Pink          // Pink
+            Color.Blue, Color.Red, Color.Green, Color.Orange, Color.Purple,
+            Color.Yellow, Color.Magenta, Color.Cyan, Color.Pink
         };
 
         public ZoneOverlay(Rectangle bounds, string number)
@@ -1042,12 +1025,10 @@ namespace LightweightZoneManager
             this.StartPosition = FormStartPosition.Manual;
             this.Bounds = bounds;
 
-            // Use different colors for each zone
             int colorIndex = (int.Parse(number) - 1) % zoneColors.Length;
             this.BackColor = zoneColors[colorIndex];
-            this.Opacity = 0.7; // Use form opacity instead of color alpha
+            this.Opacity = 0.7;
 
-            // Auto-hide after 8 seconds (longer duration)
             var timer = new Timer();
             timer.Interval = 8000;
             timer.Tick += (s, e) => { this.Close(); timer.Dispose(); };
@@ -1057,33 +1038,20 @@ namespace LightweightZoneManager
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-
-            // Draw thick border for better distinction
             using (var borderPen = new Pen(Color.White, 4))
             {
                 e.Graphics.DrawRectangle(borderPen, 2, 2, this.Width - 4, this.Height - 4);
             }
-
-            // Draw zone number with background for better readability
             using (var backgroundBrush = new SolidBrush(Color.FromArgb(200, 0, 0, 0)))
             using (var textBrush = new SolidBrush(Color.White))
             using (var font = new Font("Arial", 32, FontStyle.Bold))
             {
                 var size = e.Graphics.MeasureString(zoneNumber, font);
-                var point = new PointF(
-                    (this.Width - size.Width) / 2,
-                    (this.Height - size.Height) / 2
-                );
-
-                // Draw background rectangle for text
+                var point = new PointF((this.Width - size.Width) / 2, (this.Height - size.Height) / 2);
                 var textRect = new RectangleF(point.X - 10, point.Y - 5, size.Width + 20, size.Height + 10);
                 e.Graphics.FillRectangle(backgroundBrush, textRect);
-
-                // Draw the number
                 e.Graphics.DrawString(zoneNumber, font, textBrush, point);
             }
-
-            // Draw zone info at top-left corner
             using (var infoBrush = new SolidBrush(Color.White))
             using (var infoFont = new Font("Arial", 9, FontStyle.Bold))
             {
@@ -1097,19 +1065,25 @@ namespace LightweightZoneManager
             get
             {
                 CreateParams cp = base.CreateParams;
-                cp.ExStyle |= 0x80000; // WS_EX_LAYERED
-                cp.ExStyle |= 0x20; // WS_EX_TRANSPARENT
+                cp.ExStyle |= NativeConstants.WS_EX_LAYERED;
+                cp.ExStyle |= NativeConstants.WS_EX_TRANSPARENT;
+                cp.ExStyle |= NativeConstants.WS_EX_NOACTIVATE;
                 return cp;
             }
         }
     }
 
-    // Editable zone overlay with drag and resize functionality  
+    // -------------------------------
+    // Editable zone overlay (drag/resize)
+    // -------------------------------
     public class EditableZoneOverlay : Form
     {
-        private string zoneNumber;
-        private int zoneIndex;
-        private ZoneManager parentManager;
+        protected override bool ShowWithoutActivation => true;
+
+        private readonly string zoneNumber;
+        private readonly int zoneIndex;
+        private readonly ZoneManager parentManager;
+
         private bool isDragging = false;
         private bool isResizing = false;
         private Point dragOffset;
@@ -1121,17 +1095,10 @@ namespace LightweightZoneManager
             Left, Right, Top, Bottom, Move
         }
 
-        private static Color[] zoneColors = new Color[]
+        private static readonly Color[] zoneColors = new Color[]
         {
-            Color.Blue,         // Blue
-            Color.Red,          // Red  
-            Color.Green,        // Green
-            Color.Orange,       // Orange
-            Color.Purple,       // Purple
-            Color.Yellow,       // Yellow
-            Color.Magenta,      // Magenta
-            Color.Cyan,         // Cyan
-            Color.Pink          // Pink
+            Color.Blue, Color.Red, Color.Green, Color.Orange, Color.Purple,
+            Color.Yellow, Color.Magenta, Color.Cyan, Color.Pink
         };
 
         public EditableZoneOverlay(Rectangle bounds, string number, int index, ZoneManager manager)
@@ -1146,12 +1113,10 @@ namespace LightweightZoneManager
             this.StartPosition = FormStartPosition.Manual;
             this.Bounds = bounds;
 
-            // Use different colors for each zone
             int colorIndex = (int.Parse(number) - 1) % zoneColors.Length;
             this.BackColor = zoneColors[colorIndex];
-            this.Opacity = 0.8; // Slightly more opaque for editing
+            this.Opacity = 0.8;
 
-            // Enable mouse events
             this.SetStyle(ControlStyles.UserMouse, true);
             this.MouseDown += OnMouseDown;
             this.MouseMove += OnMouseMove;
@@ -1195,7 +1160,6 @@ namespace LightweightZoneManager
             }
             else
             {
-                // Update cursor based on position
                 ResizeDirection direction = GetResizeDirection(e.Location);
                 this.Cursor = GetCursorForDirection(direction);
             }
@@ -1329,7 +1293,6 @@ namespace LightweightZoneManager
                     break;
             }
 
-            // Minimum size constraints
             if (newBounds.Width >= 50 && newBounds.Height >= 30)
             {
                 this.Bounds = newBounds;
@@ -1340,49 +1303,38 @@ namespace LightweightZoneManager
         {
             base.OnPaint(e);
 
-            // Draw thick border for better distinction
             using (var borderPen = new Pen(Color.White, 3))
             {
                 e.Graphics.DrawRectangle(borderPen, 1, 1, this.Width - 2, this.Height - 2);
             }
 
-            // Draw resize handles
             const int handleSize = 8;
             using (var handleBrush = new SolidBrush(Color.White))
             {
-                // Corner handles
                 e.Graphics.FillRectangle(handleBrush, 0, 0, handleSize, handleSize);
                 e.Graphics.FillRectangle(handleBrush, this.Width - handleSize, 0, handleSize, handleSize);
                 e.Graphics.FillRectangle(handleBrush, 0, this.Height - handleSize, handleSize, handleSize);
                 e.Graphics.FillRectangle(handleBrush, this.Width - handleSize, this.Height - handleSize, handleSize, handleSize);
 
-                // Edge handles
                 e.Graphics.FillRectangle(handleBrush, this.Width / 2 - handleSize / 2, 0, handleSize, handleSize);
                 e.Graphics.FillRectangle(handleBrush, this.Width / 2 - handleSize / 2, this.Height - handleSize, handleSize, handleSize);
                 e.Graphics.FillRectangle(handleBrush, 0, this.Height / 2 - handleSize / 2, handleSize, handleSize);
                 e.Graphics.FillRectangle(handleBrush, this.Width - handleSize, this.Height / 2 - handleSize / 2, handleSize, handleSize);
             }
 
-            // Draw zone number and info
             using (var backgroundBrush = new SolidBrush(Color.FromArgb(200, 0, 0, 0)))
             using (var textBrush = new SolidBrush(Color.White))
             using (var font = new Font("Arial", 24, FontStyle.Bold))
             using (var smallFont = new Font("Arial", 9, FontStyle.Bold))
             {
                 var size = e.Graphics.MeasureString(zoneNumber, font);
-                var point = new PointF(
-                    (this.Width - size.Width) / 2,
-                    (this.Height - size.Height) / 2
-                );
+                var point = new PointF((this.Width - size.Width) / 2, (this.Height - size.Height) / 2);
 
-                // Draw background rectangle for text
                 var textRect = new RectangleF(point.X - 10, point.Y - 5, size.Width + 20, size.Height + 10);
                 e.Graphics.FillRectangle(backgroundBrush, textRect);
 
-                // Draw the number
                 e.Graphics.DrawString(zoneNumber, font, textBrush, point);
 
-                // Draw instructions at the bottom
                 string instructions = "Drag to move • Drag corners/edges to resize";
                 e.Graphics.DrawString(instructions, smallFont, textBrush, new PointF(10, this.Height - 25));
             }
@@ -1393,26 +1345,32 @@ namespace LightweightZoneManager
             get
             {
                 CreateParams cp = base.CreateParams;
-                cp.ExStyle |= 0x80000; // WS_EX_LAYERED
+                cp.ExStyle |= NativeConstants.WS_EX_LAYERED;
+                // Intentionally NOT transparent here because we need to interact with it
+                cp.ExStyle |= NativeConstants.WS_EX_NOACTIVATE;
                 return cp;
             }
         }
     }
 
-    // Drag zone overlay for drag-and-drop functionality
+    // -------------------------------
+    // Drag zone overlay (highlight on hover)
+    // -------------------------------
     public class DragZoneOverlay : Form
     {
-        private string zoneNumber;
-        private int zoneIndex;
+        protected override bool ShowWithoutActivation => true;
+
+        private readonly string zoneNumber;
+        private readonly int zoneIndex;
         private bool isHighlighted = false;
 
-        private static Color[] normalColors = new Color[]
+        private static readonly Color[] normalColors = new Color[]
         {
             Color.LightBlue, Color.LightCoral, Color.LightGreen, Color.Orange,
             Color.Plum, Color.Khaki, Color.Orchid, Color.LightCyan, Color.Pink
         };
 
-        private static Color[] highlightColors = new Color[]
+        private static readonly Color[] highlightColors = new Color[]
         {
             Color.Blue, Color.Red, Color.Green, Color.DarkOrange, Color.Purple,
             Color.Gold, Color.Magenta, Color.Cyan, Color.HotPink
@@ -1433,7 +1391,6 @@ namespace LightweightZoneManager
             this.BackColor = normalColors[colorIndex];
             this.Opacity = 0.6;
 
-            // Set up for transparency
             this.SetStyle(ControlStyles.SupportsTransparentBackColor, true);
         }
 
@@ -1454,32 +1411,25 @@ namespace LightweightZoneManager
         {
             base.OnPaint(e);
 
-            // Draw border - thicker when highlighted
             int borderWidth = isHighlighted ? 6 : 3;
             using (var borderPen = new Pen(Color.White, borderWidth))
             {
                 int offset = borderWidth / 2;
-                e.Graphics.DrawRectangle(borderPen, offset, offset,
-                    this.Width - borderWidth, this.Height - borderWidth);
+                e.Graphics.DrawRectangle(borderPen, offset, offset, this.Width - borderWidth, this.Height - borderWidth);
             }
 
-            // Draw zone number
             using (var backgroundBrush = new SolidBrush(Color.FromArgb(180, 0, 0, 0)))
             using (var textBrush = new SolidBrush(Color.White))
             using (var font = new Font("Arial", isHighlighted ? 36 : 28, FontStyle.Bold))
             {
                 var size = e.Graphics.MeasureString(zoneNumber, font);
-                var point = new PointF(
-                    (this.Width - size.Width) / 2,
-                    (this.Height - size.Height) / 2
-                );
+                var point = new PointF((this.Width - size.Width) / 2, (this.Height - size.Height) / 2);
 
                 var textRect = new RectangleF(point.X - 10, point.Y - 5, size.Width + 20, size.Height + 10);
                 e.Graphics.FillRectangle(backgroundBrush, textRect);
                 e.Graphics.DrawString(zoneNumber, font, textBrush, point);
             }
 
-            // Show drop instruction when highlighted
             if (isHighlighted)
             {
                 using (var textBrush = new SolidBrush(Color.White))
@@ -1487,10 +1437,7 @@ namespace LightweightZoneManager
                 {
                     string instruction = "Release to snap window here";
                     var size = e.Graphics.MeasureString(instruction, font);
-                    var point = new PointF(
-                        (this.Width - size.Width) / 2,
-                        this.Height - 30
-                    );
+                    var point = new PointF((this.Width - size.Width) / 2, this.Height - 30);
 
                     using (var backgroundBrush = new SolidBrush(Color.FromArgb(200, 0, 0, 0)))
                     {
@@ -1508,14 +1455,17 @@ namespace LightweightZoneManager
             get
             {
                 CreateParams cp = base.CreateParams;
-                cp.ExStyle |= 0x80000; // WS_EX_LAYERED
-                cp.ExStyle |= 0x20; // WS_EX_TRANSPARENT
+                cp.ExStyle |= NativeConstants.WS_EX_LAYERED;
+                cp.ExStyle |= NativeConstants.WS_EX_TRANSPARENT;
+                cp.ExStyle |= NativeConstants.WS_EX_NOACTIVATE;
                 return cp;
             }
         }
     }
 
+    // -------------------------------
     // Global mouse hook for drag detection
+    // -------------------------------
     public class GlobalMouseHook : IDisposable
     {
         private const int WH_MOUSE_LL = 14;
@@ -1544,8 +1494,7 @@ namespace LightweightZoneManager
             using (Process curProcess = Process.GetCurrentProcess())
             using (ProcessModule curModule = curProcess.MainModule)
             {
-                return SetWindowsHookEx(WH_MOUSE_LL, proc,
-                    GetModuleHandle(curModule.ModuleName), 0);
+                return SetWindowsHookEx(WH_MOUSE_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
             }
         }
 
@@ -1595,7 +1544,9 @@ namespace LightweightZoneManager
         private static extern IntPtr GetModuleHandle(string lpModuleName);
     }
 
-    // Global keyboard hook class
+    // -------------------------------
+    // Global keyboard hook for hotkeys
+    // -------------------------------
     public class GlobalKeyboardHook : IDisposable
     {
         [DllImport("user32.dll")]
