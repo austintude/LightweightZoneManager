@@ -10,7 +10,7 @@ namespace LightweightZoneManager
     public partial class ZoneManager : Form
     {
         // Version identifier for this refactored build
-        private const string VERSION = "2.1-EditFixed";
+        private const string VERSION = "2.2-EditModeFixed";
         private const string BUILD_DATE = "2025-01-31";
 
         private NotifyIcon trayIcon;
@@ -728,7 +728,11 @@ namespace LightweightZoneManager
         {
             HideZones();
 
+            // Set edit mode AFTER HideZones() which resets it to false
+            editMode = true;
+
             Console.WriteLine($"=== SHOWING EDITABLE ZONES (v{VERSION}) ===");
+            Console.WriteLine($"Edit mode is now: {editMode}");
             Console.WriteLine($"Creating {Math.Min(zones.Count, 9)} editable overlays");
 
             for (int i = 0; i < zones.Count && i < 9; i++)
@@ -851,7 +855,7 @@ namespace LightweightZoneManager
                 return;
             }
 
-            editMode = true;
+            // editMode is set inside ShowEditableZones() after HideZones()
             ShowEditableZones();
         }
 
