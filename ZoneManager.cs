@@ -10,7 +10,7 @@ namespace LightweightZoneManager
     public partial class ZoneManager : Form
     {
         // Version identifier for this refactored build
-        private const string VERSION = "2.2-EditModeFixed";
+        private const string VERSION = "2.3-ZOrderFixed";
         private const string BUILD_DATE = "2025-01-31";
 
         private NotifyIcon trayIcon;
@@ -547,10 +547,12 @@ namespace LightweightZoneManager
             NativeApi.POINT cursorPos;
             NativeApi.GetCursorPos(out cursorPos);
 
-            for (int i = 0; i < zones.Count; i++)
+            // Search in reverse order to match visual z-order (last drawn = on top)
+            for (int i = zones.Count - 1; i >= 0; i--)
             {
                 if (zones[i].Contains(cursorPos.X, cursorPos.Y))
                 {
+                    Console.WriteLine($"Zone {i + 1} found at cursor position ({cursorPos.X}, {cursorPos.Y})");
                     return i;
                 }
             }
