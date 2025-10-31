@@ -49,9 +49,17 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="DragZoneOverlay.cs" />
+    <Compile Include="EditableZoneOverlay.cs" />
+    <Compile Include="GlobalKeyboardHook.cs" />
+    <Compile Include="GlobalMouseHook.cs" />
+    <Compile Include="MonitorManager.cs" />
+    <Compile Include="NativeApi.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="ZoneConfiguration.cs" />
     <Compile Include="ZoneManager.cs" />
+    <Compile Include="ZoneOverlay.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
