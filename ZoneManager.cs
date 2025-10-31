@@ -10,7 +10,7 @@ namespace LightweightZoneManager
     public partial class ZoneManager : Form
     {
         // Version identifier for this refactored build
-        private const string VERSION = "2.3-ZOrderFixed";
+        private const string VERSION = "3.0-Unlimited";
         private const string BUILD_DATE = "2025-01-31";
 
         private NotifyIcon trayIcon;
@@ -237,24 +237,29 @@ namespace LightweightZoneManager
 
             Console.WriteLine($"Creating default zones for {monitorCount} monitor(s)");
 
-            if (monitorCount >= 1)
+            // Create zones for each monitor
+            for (int monitor = 1; monitor <= monitorCount; monitor++)
             {
-                // 6 zones for primary monitor
-                zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 0, Y = 0, Width = 50, Height = 50, Name = "Top-Left" });
-                zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 50, Y = 0, Width = 50, Height = 50, Name = "Top-Right" });
-                zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 0, Y = 50, Width = 50, Height = 50, Name = "Bottom-Left" });
-                zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 50, Y = 50, Width = 50, Height = 50, Name = "Bottom-Right" });
-                zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 0, Y = 0, Width = 50, Height = 100, Name = "Left Half" });
-                zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 50, Y = 0, Width = 50, Height = 100, Name = "Right Half" });
+                if (monitor == 1)
+                {
+                    // Primary monitor: 6 zones (4 quarters + 2 halves)
+                    zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 0, Y = 0, Width = 50, Height = 50, Name = "M1 Top-Left" });
+                    zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 50, Y = 0, Width = 50, Height = 50, Name = "M1 Top-Right" });
+                    zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 0, Y = 50, Width = 50, Height = 50, Name = "M1 Bottom-Left" });
+                    zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 50, Y = 50, Width = 50, Height = 50, Name = "M1 Bottom-Right" });
+                    zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 0, Y = 0, Width = 50, Height = 100, Name = "M1 Left Half" });
+                    zoneConfigs.Add(new ZoneConfig { Monitor = 1, X = 50, Y = 0, Width = 50, Height = 100, Name = "M1 Right Half" });
+                }
+                else
+                {
+                    // Secondary monitors: 3 zones (top half, bottom half, full)
+                    zoneConfigs.Add(new ZoneConfig { Monitor = monitor, X = 0, Y = 0, Width = 100, Height = 50, Name = $"M{monitor} Top" });
+                    zoneConfigs.Add(new ZoneConfig { Monitor = monitor, X = 0, Y = 50, Width = 100, Height = 50, Name = $"M{monitor} Bottom" });
+                    zoneConfigs.Add(new ZoneConfig { Monitor = monitor, X = 0, Y = 0, Width = 100, Height = 100, Name = $"M{monitor} Full" });
+                }
             }
 
-            if (monitorCount >= 2)
-            {
-                // 3 zones for secondary monitor
-                zoneConfigs.Add(new ZoneConfig { Monitor = 2, X = 0, Y = 0, Width = 100, Height = 50, Name = "Monitor 2 Top" });
-                zoneConfigs.Add(new ZoneConfig { Monitor = 2, X = 0, Y = 50, Width = 100, Height = 50, Name = "Monitor 2 Bottom" });
-                zoneConfigs.Add(new ZoneConfig { Monitor = 2, X = 0, Y = 0, Width = 100, Height = 100, Name = "Monitor 2 Full" });
-            }
+            Console.WriteLine($"Created {zoneConfigs.Count} default zones across {monitorCount} monitor(s)");
 
             BuildZonesFromConfig();
         }
@@ -696,7 +701,8 @@ namespace LightweightZoneManager
         {
             HideZones();
 
-            for (int i = 0; i < zones.Count && i < 9; i++)
+            // Show all zones, not just first 9
+            for (int i = 0; i < zones.Count; i++)
             {
                 var overlay = new DragZoneOverlay(zones[i], (i + 1).ToString(), i);
                 overlay.Show();
@@ -716,7 +722,8 @@ namespace LightweightZoneManager
 
             HideZones();
 
-            for (int i = 0; i < zones.Count && i < 9; i++)
+            // Show all zones, not just first 9
+            for (int i = 0; i < zones.Count; i++)
             {
                 var overlay = new ZoneOverlay(zones[i], (i + 1).ToString());
                 overlay.Show();
@@ -735,9 +742,10 @@ namespace LightweightZoneManager
 
             Console.WriteLine($"=== SHOWING EDITABLE ZONES (v{VERSION}) ===");
             Console.WriteLine($"Edit mode is now: {editMode}");
-            Console.WriteLine($"Creating {Math.Min(zones.Count, 9)} editable overlays");
+            Console.WriteLine($"Creating {zones.Count} editable overlays");
 
-            for (int i = 0; i < zones.Count && i < 9; i++)
+            // Show all zones, not just first 9
+            for (int i = 0; i < zones.Count; i++)
             {
                 Console.WriteLine($"Creating editable overlay {i + 1} at {zones[i]}");
                 var overlay = new EditableZoneOverlay(zones[i], (i + 1).ToString(), i, this);
@@ -972,18 +980,23 @@ namespace LightweightZoneManager
                 "• Release mouse (while still in zone) to snap\n\n" +
                 "HOTKEYS (Admin Mode Only):\n" +
                 "• Ctrl+Shift+` = Show/hide zones\n" +
-                "• Ctrl+Shift+1–9 = Snap active window to zone\n\n" +
+                "• Ctrl+Shift+1–9 = Snap active window to zone 1-9\n" +
+                "  (Zones 10+ work with drag & drop only)\n\n" +
                 "EDIT ZONES:\n" +
                 "• Right-click tray icon → 'Edit Zones'\n" +
                 "• Drag zones to move them\n" +
                 "• Drag corners/edges to resize\n" +
                 "• Right-click tray → 'Save Current Layout' when done\n\n" +
+                "ADD MORE ZONES:\n" +
+                "• Edit ZoneConfig.xml manually (right-click → Open Config Folder)\n" +
+                "• Each zone needs: Monitor, X, Y, Width, Height (as percentages)\n" +
+                "• Or use 'Reset to Defaults' to auto-generate for all monitors\n\n" +
                 "SYSTEM INFO:\n" +
                 $"• Monitors: {MonitorManager.GetMonitorCount()}\n" +
                 $"• Zones loaded: {zones.Count}\n" +
                 $"• Config: {Path.GetFileName(configPath)}\n" +
                 "• Elevated windows require running as Admin\n\n" +
-                "NEW IN v2.0: Monitor change detection & modular code!";
+                "NEW IN v2.3: Unlimited zones & multi-monitor support!";
             MessageBox.Show(instructions, "Zone Manager - Usage Instructions", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
