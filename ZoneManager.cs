@@ -369,6 +369,13 @@ namespace LightweightZoneManager
 
         private void MouseHook_MouseDown(object sender, MouseEventArgs e)
         {
+            // Don't interfere with edit mode
+            if (editMode)
+            {
+                Console.WriteLine("MouseHook: Ignoring mouse down - edit mode active");
+                return;
+            }
+
             if (e.Button == MouseButtons.Left)
             {
                 ctrlWasPressed = IsCtrlPressed();
@@ -406,6 +413,10 @@ namespace LightweightZoneManager
 
         private void MouseHook_MouseMove(object sender, MouseEventArgs e)
         {
+            // Don't interfere with edit mode
+            if (editMode)
+                return;
+
             // Only start showing zones if we have a valid window and CTRL is still pressed
             if (ctrlWasPressed && IsCtrlPressed() && !isDragSnapping && draggedWindow != IntPtr.Zero)
             {
@@ -439,6 +450,10 @@ namespace LightweightZoneManager
 
         private void MouseHook_MouseUp(object sender, MouseEventArgs e)
         {
+            // Don't interfere with edit mode
+            if (editMode)
+                return;
+
             if (e.Button == MouseButtons.Left)
             {
                 lastDragEnd = DateTime.Now;
