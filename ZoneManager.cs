@@ -9,6 +9,10 @@ namespace LightweightZoneManager
 {
     public partial class ZoneManager : Form
     {
+        // Version identifier for this refactored build
+        private const string VERSION = "2.0-Refactored";
+        private const string BUILD_DATE = "2025-01-31";
+
         private NotifyIcon trayIcon;
         private ContextMenuStrip trayMenu;
         private bool zonesVisible = false;
@@ -57,7 +61,7 @@ namespace LightweightZoneManager
             {
                 Icon = customIcon,
                 Visible = true,
-                Text = "Lightweight Zone Manager - Ctrl+Shift+` to show zones"
+                Text = $"Zone Manager v{VERSION} - Ctrl+Shift+` to show zones"
             };
 
             trayMenu = new ContextMenuStrip();
@@ -709,14 +713,21 @@ namespace LightweightZoneManager
         {
             HideZones();
 
+            Console.WriteLine($"=== SHOWING EDITABLE ZONES (v{VERSION}) ===");
+            Console.WriteLine($"Creating {Math.Min(zones.Count, 9)} editable overlays");
+
             for (int i = 0; i < zones.Count && i < 9; i++)
             {
+                Console.WriteLine($"Creating editable overlay {i + 1} at {zones[i]}");
                 var overlay = new EditableZoneOverlay(zones[i], (i + 1).ToString(), i, this);
                 overlay.Show();
                 zoneOverlays.Add(overlay);
                 overlayHandles.Add(overlay.Handle);
+                Console.WriteLine($"Overlay {i + 1} created with handle: {overlay.Handle}");
             }
             zonesVisible = true;
+
+            Console.WriteLine($"Total editable overlays created: {zoneOverlays.Count}");
 
             trayIcon.ShowBalloonTip(5000, "Zone Editor",
                 "Drag zones to move, drag corners to resize. Right-click tray → 'Save Current Layout' when done.",
@@ -810,6 +821,21 @@ namespace LightweightZoneManager
 
         private void EditZones_Click(object sender, EventArgs e)
         {
+            Console.WriteLine($"=== EDIT ZONES CLICKED (v{VERSION}) ===");
+            Console.WriteLine($"Current zones count: {zones.Count}");
+
+            if (zones.Count == 0)
+            {
+                MessageBox.Show(
+                    "No zones available to edit!\n\n" +
+                    "This might happen if your monitor configuration has changed.\n" +
+                    "Try 'Reset to Defaults' from the tray menu.",
+                    "No Zones Available",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
             editMode = true;
             ShowEditableZones();
         }
@@ -913,6 +939,9 @@ namespace LightweightZoneManager
         private void PinInstructions_Click(object sender, EventArgs e)
         {
             string instructions =
+                $"LIGHTWEIGHT ZONE MANAGER v{VERSION}\n" +
+                $"Build Date: {BUILD_DATE}\n" +
+                $"═══════════════════════════════════════\n\n" +
                 "HOW TO USE ZONE MANAGER:\n\n" +
                 "DRAG & DROP SNAPPING (No Admin Required):\n" +
                 "• Hold CTRL, then START dragging any window\n" +
@@ -923,12 +952,18 @@ namespace LightweightZoneManager
                 "HOTKEYS (Admin Mode Only):\n" +
                 "• Ctrl+Shift+` = Show/hide zones\n" +
                 "• Ctrl+Shift+1–9 = Snap active window to zone\n\n" +
-                "TROUBLESHOOTING:\n" +
-                $"• Config: {configPath}\n" +
-                $"• Zones loaded: {zones.Count}\n" +
+                "EDIT ZONES:\n" +
+                "• Right-click tray icon → 'Edit Zones'\n" +
+                "• Drag zones to move them\n" +
+                "• Drag corners/edges to resize\n" +
+                "• Right-click tray → 'Save Current Layout' when done\n\n" +
+                "SYSTEM INFO:\n" +
                 $"• Monitors: {MonitorManager.GetMonitorCount()}\n" +
-                "• Elevated windows require running this app as Admin.";
-            MessageBox.Show(instructions, "Zone Manager Usage & Pin Instructions", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                $"• Zones loaded: {zones.Count}\n" +
+                $"• Config: {Path.GetFileName(configPath)}\n" +
+                "• Elevated windows require running as Admin\n\n" +
+                "NEW IN v2.0: Monitor change detection & modular code!";
+            MessageBox.Show(instructions, "Zone Manager - Usage Instructions", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         protected override void SetVisibleCore(bool value)

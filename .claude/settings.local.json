@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(copy:*)",
+      "Bash(\"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe\" LightweightZoneManager.csproj /p:Configuration=Release /t:Rebuild /v:minimal)",
+      "Bash(\"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe\" LightweightZoneManager.csproj /p:Configuration=Release /t:Rebuild)",
+      "Bash(powershell:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nRefactor: Break ZoneManager into modular files + Add monitor change detection\n\nMajor Changes:\n- Split 1666-line ZoneManager.cs into 9 focused files\n- Added MonitorManager with change detection via fingerprinting\n- Added monitor mismatch warnings on startup\n- Config now stores monitor fingerprint for validation\n\nNew File Structure:\n- NativeApi.cs - Windows API declarations\n- ZoneConfiguration.cs - Config models and persistence\n- MonitorManager.cs - Monitor detection and validation\n- ZoneOverlay.cs - Read-only zone display\n- EditableZoneOverlay.cs - Interactive zone editing\n- DragZoneOverlay.cs - Drag-and-drop highlighting\n- GlobalMouseHook.cs - Mouse event hook\n- GlobalKeyboardHook.cs - Keyboard hotkey hook\n- ZoneManager.cs - Simplified main form (now ~800 lines)\n\nFixes:\n- Zones for missing monitors are now detected and skipped\n- User prompted to reset zones when monitors change\n- Better error messages for monitor configuration issues\n\nThis fixes the issue where zones stopped working after monitor setup changed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
