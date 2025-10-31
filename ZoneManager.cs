@@ -10,7 +10,7 @@ namespace LightweightZoneManager
     public partial class ZoneManager : Form
     {
         // Version identifier for this refactored build
-        private const string VERSION = "2.0-Refactored";
+        private const string VERSION = "2.1-EditFixed";
         private const string BUILD_DATE = "2025-01-31";
 
         private NotifyIcon trayIcon;
