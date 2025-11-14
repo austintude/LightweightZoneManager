@@ -17,15 +17,81 @@ A lightweight, customizable window snapping tool for Windows that lets you organ
 - **Percentage-Based Layout**: Zones adapt to any screen resolution
 - **Lightweight**: Runs quietly in the system tray, minimal resource usage
 
-## Quick Start
+## Installation & Setup
 
-### Installation
+### Option 1: Download Pre-Built Executable (Easiest)
 
-1. Download the latest release or build from source
-2. Run `LightweightZoneManager.exe`
-3. The app will appear in your system tray
+1. **Go to the GitHub repository**
+   - Visit: `https://github.com/YOUR_USERNAME/LightweightZoneManager`
 
-### Basic Usage
+2. **Download the latest release**
+   - Click on **"Releases"** on the right side of the page
+   - Click on the latest release (e.g., `v3.0-Unlimited`)
+   - Under **"Assets"**, download `LightweightZoneManager.exe`
+
+3. **Save to a permanent location**
+   - Create a folder: `C:\Program Files\LightweightZoneManager\` (or any location you prefer)
+   - Move `LightweightZoneManager.exe` to this folder
+   - **Important**: Don't run it from your Downloads folder - it creates config files in its directory
+
+4. **Install .NET Framework 4.8** (if needed)
+   - If the app doesn't run, you may need .NET Framework 4.8
+   - Download from: https://dotnet.microsoft.com/download/dotnet-framework/net48
+   - Install and restart your computer
+
+5. **Launch the application**
+   - Double-click `LightweightZoneManager.exe`
+   - The app will start and appear in your **system tray** (bottom-right corner of screen, near the clock)
+   - Look for the grid icon in the system tray
+   - A notification balloon will appear confirming the app is running
+
+6. **First-time setup**
+   - Right-click the tray icon → **"Show Zones"** to see the default layout
+   - Default zones will be created automatically for your monitors
+   - Try the drag & drop feature: Hold **Ctrl**, drag any window to see zones appear
+
+### Option 2: Build from Source
+
+If you want to build the application yourself or contribute to development:
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/LightweightZoneManager.git
+   cd LightweightZoneManager
+   ```
+
+2. **Prerequisites**
+   - Install **Visual Studio 2022** or later (Community Edition is free)
+     - Download from: https://visualstudio.microsoft.com/downloads/
+     - During installation, select **".NET desktop development"** workload
+   - .NET Framework 4.8 SDK (included with Visual Studio)
+
+3. **Build using Visual Studio** (recommended)
+   - Open `LightweightZoneManager.sln` in Visual Studio
+   - Press `Ctrl+Shift+B` to build, or go to **Build → Build Solution**
+   - The executable will be in `bin\Release\LightweightZoneManager.exe`
+
+4. **Build using command line**
+   ```bash
+   "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" LightweightZoneManager.csproj /p:Configuration=Release /t:Rebuild
+   ```
+
+5. **Run the application**
+   ```bash
+   cd bin\Release
+   .\LightweightZoneManager.exe
+   ```
+
+### Making it Start on Windows Startup (Optional)
+
+To have Zone Manager start automatically when you log in:
+
+1. Press `Win+R` to open Run dialog
+2. Type `shell:startup` and press Enter
+3. Create a shortcut to `LightweightZoneManager.exe` in this folder
+4. The app will now start automatically on login
+
+## Basic Usage
 
 **Drag & Drop (Recommended - No Admin Required):**
 1. Hold **Ctrl** key
@@ -72,30 +138,10 @@ See [ZONE_CONFIGURATION_GUIDE.md](ZONE_CONFIGURATION_GUIDE.md) for detailed exam
 
 ## System Requirements
 
-- Windows 7 or later
-- .NET Framework 4.8
-- Admin rights (optional, only needed for hotkeys)
-
-## Building from Source
-
-### Prerequisites
-- Visual Studio 2022 or later (Community Edition works)
-- .NET Framework 4.8 SDK
-
-### Build Steps
-
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/LightweightZoneManager.git
-cd LightweightZoneManager
-
-# Build using MSBuild (or open the .sln in Visual Studio)
-"C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" LightweightZoneManager.csproj /p:Configuration=Release /t:Rebuild
-
-# Run the executable
-cd bin\Release
-.\LightweightZoneManager.exe
-```
+- **Operating System**: Windows 7 or later (Windows 10/11 recommended)
+- **Runtime**: .NET Framework 4.8
+- **Permissions**: Admin rights optional (only needed for hotkey support)
+- **Display**: Works with single or multiple monitors
 
 ## Project Structure
 
