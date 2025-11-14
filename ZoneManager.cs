@@ -527,9 +527,16 @@ namespace LightweightZoneManager
 
         private void EndDragSnapping()
         {
+            Console.WriteLine($"\n=== END DRAG SNAPPING ===");
+            Console.WriteLine($"isDragSnapping: {isDragSnapping} -> false");
+            Console.WriteLine($"ctrlWasPressed: {ctrlWasPressed} -> false");
+            Console.WriteLine($"About to call HideZones()...");
+
             isDragSnapping = false;
             ctrlWasPressed = false;
             HideZones();
+
+            Console.WriteLine($"EndDragSnapping complete.");
         }
 
         private void HighlightZoneUnderMouse()
@@ -552,15 +559,22 @@ namespace LightweightZoneManager
             NativeApi.POINT cursorPos;
             NativeApi.GetCursorPos(out cursorPos);
 
+            Console.WriteLine($"\n=== GET ZONE UNDER MOUSE ===");
+            Console.WriteLine($"Cursor position: ({cursorPos.X}, {cursorPos.Y})");
+            Console.WriteLine($"Total zones to check: {zones.Count}");
+            Console.WriteLine($"Checking zones in reverse order (top visual layer first)...");
+
             // Search in reverse order to match visual z-order (last drawn = on top)
             for (int i = zones.Count - 1; i >= 0; i--)
             {
+                Console.WriteLine($"  Checking zone {i + 1}: {zones[i]}");
                 if (zones[i].Contains(cursorPos.X, cursorPos.Y))
                 {
-                    Console.WriteLine($"Zone {i + 1} found at cursor position ({cursorPos.X}, {cursorPos.Y})");
+                    Console.WriteLine($"  ✓ Zone {i + 1} MATCH! Returning index {i}");
                     return i;
                 }
             }
+            Console.WriteLine($"  ✗ No zone found under cursor");
             return -1;
         }
 
@@ -699,17 +713,32 @@ namespace LightweightZoneManager
 
         private void ShowDragZones()
         {
+            Console.WriteLine($"\n=== SHOWING DRAG ZONES (v{VERSION}) ===");
+            Console.WriteLine($"Total zones to display: {zones.Count}");
+            Console.WriteLine($"overlayHandles before HideZones: {overlayHandles.Count}");
+            Console.WriteLine($"zoneOverlays before HideZones: {zoneOverlays.Count}");
+
             HideZones();
+
+            Console.WriteLine($"overlayHandles after HideZones: {overlayHandles.Count}");
+            Console.WriteLine($"zoneOverlays after HideZones: {zoneOverlays.Count}");
 
             // Show all zones, not just first 9
             for (int i = 0; i < zones.Count; i++)
             {
+                Console.WriteLine($"Creating drag zone {i + 1} at {zones[i]}");
                 var overlay = new DragZoneOverlay(zones[i], (i + 1).ToString(), i);
                 overlay.Show();
                 zoneOverlays.Add(overlay);
                 overlayHandles.Add(overlay.Handle);
+                Console.WriteLine($"  Overlay {i + 1} handle: {overlay.Handle}");
             }
             zonesVisible = true;
+
+            Console.WriteLine($"Drag zones visible. Final counts:");
+            Console.WriteLine($"  Overlay count: {zoneOverlays.Count}");
+            Console.WriteLine($"  Handle count: {overlayHandles.Count}");
+            Console.WriteLine($"  zonesVisible: {zonesVisible}");
         }
 
         private void ShowZones()
@@ -765,8 +794,15 @@ namespace LightweightZoneManager
 
         private void HideZones()
         {
+            Console.WriteLine($"\n=== HIDING ZONES ===");
+            Console.WriteLine($"Overlays to close: {zoneOverlays.Count}");
+            Console.WriteLine($"Handles to clear: {overlayHandles.Count}");
+            Console.WriteLine($"zonesVisible: {zonesVisible}");
+            Console.WriteLine($"editMode: {editMode}");
+
             foreach (var overlay in zoneOverlays)
             {
+                Console.WriteLine($"  Closing overlay with handle: {overlay.Handle}");
                 overlayHandles.Remove(overlay.Handle);
                 overlay.Close();
             }
@@ -774,6 +810,12 @@ namespace LightweightZoneManager
             overlayHandles.Clear();
             zonesVisible = false;
             editMode = false;
+
+            Console.WriteLine($"After HideZones:");
+            Console.WriteLine($"  zoneOverlays.Count: {zoneOverlays.Count}");
+            Console.WriteLine($"  overlayHandles.Count: {overlayHandles.Count}");
+            Console.WriteLine($"  zonesVisible: {zonesVisible}");
+            Console.WriteLine($"  editMode: {editMode}");
         }
 
         // ===============================
