@@ -260,4 +260,4 @@ The `MonitorFingerprint` field tracks your monitor setup:
 
 - Check "Usage Instructions" in the tray menu
 - Look at `UPGRADE_INSTRUCTIONS.md` for version info
-- Report issues at: https://github.com/anthropics/claude-code/issues
+- Report issues at: https://github.com/austintude/LightweightZoneManager/issues

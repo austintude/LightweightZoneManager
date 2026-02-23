@@ -22,7 +22,7 @@ A lightweight, customizable window snapping tool for Windows that lets you organ
 ### Option 1: Download Pre-Built Executable (Easiest)
 
 1. **Go to the GitHub repository**
-   - Visit: `https://github.com/YOUR_USERNAME/LightweightZoneManager`
+   - Visit: `https://github.com/austintude/LightweightZoneManager`
 
 2. **Download the latest release**
    - Click on **"Releases"** on the right side of the page
@@ -56,7 +56,7 @@ If you want to build the application yourself or contribute to development:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/LightweightZoneManager.git
+   git clone https://github.com/austintude/LightweightZoneManager.git
    cd LightweightZoneManager
    ```
 
@@ -219,7 +219,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Support
 
-- **Issues**: Report bugs via [GitHub Issues](https://github.com/YOUR_USERNAME/LightweightZoneManager/issues)
+- **Issues**: Report bugs via [GitHub Issues](https://github.com/austintude/LightweightZoneManager/issues)
 - **Documentation**: See [ZONE_CONFIGURATION_GUIDE.md](ZONE_CONFIGURATION_GUIDE.md)
 - **Discussions**: Share your custom layouts and ideas!
 
